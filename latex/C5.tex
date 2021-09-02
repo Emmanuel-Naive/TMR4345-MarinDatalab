@@ -1,0 +1,11 @@
+\chapter{Conclusion}
+\section{Conclusion}
+In this project, there is a ship that needs to go to the designated place within the specified time. In this case, an algorithm to find the optimum velocity and path was designed for the minimal consumption energy. In this algorithm, costs would be calculated by ITTC recommended method, Hollenbach method and STAwave-1method while paths would be found by Dijkstra planning.
+\\It is successful to solve two interrelated questions, power and time, by controlling velocity firstly. After comparing and checking, the optimal velocity would be given in the terminal and the efficient path would be shown by plotting.
+\section{Reflection and future work}
+After reflecting on the whole project, there are quite a few aspects which could be improved in the future work.
+\begin{itemize}
+    \item In this project, the cost are calculated directly from the effective power, which is different from the power of engine. The conversion efficiency between these two powers is relative with ship velocity as well, which should be taken into account in real optimal velocity calculation.
+    \item There are some corrections in equations for calculating resistance. These corrections would be implemented for better results.
+    \item This project are based on many assumptions (\autoref{ass}), which could be improved as well. For example, in Assumption (\ref{A9}), changing course would not cause fuel consumption, which could be changed to reduce numbers of turning.
+\end{itemize}

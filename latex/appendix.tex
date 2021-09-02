@@ -1,0 +1,1607 @@
+\chapter{Codes}
+\section{Functions}
+\begin{lstlisting}[caption=Function for reading and reconstructing wind data (\autoref{Data processing}),label=readwind]
+def ReadCsvWind(filepath,xcol,yrow):
+    """     
+    Written by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: read data & reconstruct data 
+    Parameters:
+        filepath: filepath of CSV files (delimiter is ";")
+        xcol: number of columns in grid
+        yrow: number of rows in grid 
+    Return value:
+        dataname: matrix of reconstructed data
+    """
+    file = open(filepath, "rb")
+    filedata=np.loadtxt(file, delimiter=";")
+    file.close()
+    filearray=np.array(filedata)
+
+    """ +2: just in case for that: data is not enough for grid """
+    num_row=xcol+2                  
+    num_col=yrow+2
+    dataname = np.zeros(shape=(num_row,num_col))
+    for i in range(num_row):
+        for j in range(num_col):
+            dataname[i,j]=filearray[i, j]
+    return dataname
+\end{lstlisting}
+\begin{lstlisting}[caption=Function for reading and reconstructing wave data (\autoref{Data processing}),label=readwave]
+def ReadCsvWave(filepath,xcol,yrow):
+    """     
+    Written by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: read data & reconstruct data 
+    Parameters:
+        filepath: filepath of normal Excel files or CSV files where data is seperated by rows and columns
+        xcol: number of columns in grid
+        yrow: number of rows in grid 
+    Return value:
+        dataname: matrix of reconstructed data
+    """
+    file =pd.read_csv(filepath)
+
+    """ +2: just in case for that: data is not enough for grid """
+    num_row=xcol+2 
+    num_col=yrow+2
+    dataname = file.values[0:num_row,0:num_col]
+    return dataname
+\end{lstlisting}
+\begin{lstlisting}[caption=Function for calculating cost caused by wind (parts of code)(\autoref{Cost Wind}), label=calcostwind]
+def WindResCosFun(Vs,Axv,rho_air,wind_u,wind_v,Cair_extend,dt):
+    """     
+    Written by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: calculate cost caused by wind
+    Method: ITTC recommended method (2017)
+    Parameters:
+        Vs: measured ship's speed over ground
+        Axv:  ship's area of maximum transverse section exposed to the wind
+        rho_air: mass density of air
+        wind_u: wind speed (north-south direction)
+        wind_v: wind speed (east-west direction)
+        Cair_extend: extended data sets of the wind resistance coefficient (0~360 degrees)
+        dt: time needed for travelling between two neighbour nodes
+    Return value:
+        CF_Wind_North: cost caused by wind, if travelling to north neighbour nodes
+        CF_Wind_East: cost caused by wind, if travelling to east neighbour nodes
+        CF_Wind_South: cost caused by wind, if travelling to south neighbour nodes
+        CF_Wind_West: cost caused by wind, if travelling to west neighbour nodes
+    """
+    angle_ship=np.mat([0,90,180,270])  #Angle of ship: North, East, South and West
+    for k in range(angle_ship.shape[1]):
+        vel_wind_squre=np.mat(np.zeros(wind_v.shape))
+        vel_wt_squre=np.mat(np.zeros(wind_u.shape))
+        angle_wt=np.mat(np.zeros(wind_u.shape))
+        angle_wt_rel=np.mat(np.zeros(wind_v.shape))
+        angle_rel=np.mat(np.zeros(wind_u.shape))
+        Cx=np.mat(np.zeros(wind_v.shape))
+        if k == 0:
+            wind_u_north=wind_u+Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u_north[i, j]**2+wind_v[i, j]**2 #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                        angle_wt[i,j]=math.degrees(math.acos(wind_v[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+                    
+                    angle_wt_rel[i,j]=angle_wt[i,j]-angle_ship[0,k]+180 #Awt-Aship
+                    vel_wind_squre[i,j]=vel_wt_squre[i,j]+Vs**2+math.sqrt(vel_wt_squre[i,j])*Vs*math.cos(math.radians(angle_wt_rel[i,j])) #V_WRef
+                    nume=math.sqrt(vel_wt_squre[i,j])*math.sin(math.radians(angle_wt_rel[i,j]))
+                    deno=Vs+math.sqrt(vel_wt_squre[i,j])*math.cos(math.radians(angle_wt_rel[i,j]))
+                    if deno==0:
+                        if nume<0:
+                            angle_rel[i,j]=-90
+                        if nume>0:
+                            angle_rel[i,j]=90
+                        if nume==0:
+                            angle_rel[i,j]=0
+                    elif deno<0:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))+180 #A_WRef
+                    else:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))
+                    if angle_rel[i,j]< 0:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    
+                    weight=angle_rel[i,j]/10
+                    index=int(angle_rel[i,j]//10)
+                    Cx[i,j]=(weight-index)*Cair_extend[0,index+1]+(1-weight+index)*Cair_extend[0,index]
+            Rwind_N=0.5*rho_air*Axv*(Cx*vel_wind_squre-Cair_extend[0,0]*Vs**2)
+            CF_Wind_North=Rwind_N*Vs*dt
+
+        if k == 1:
+            wind_v_east=wind_v+Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u[i, j]**2+wind_v_east[i, j]**2 #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                    """                     
+                    It is hard to shorten codes because equations for calculating true wind direction are different.
+                    For comparison: (north) angle_wt[i,j]=math.degrees(math.acos(wind_v[i,j]/math.sqrt(vel_wt_squre[i,j])))
+                    """
+                        angle_wt[i,j]=math.degrees(math.asin(wind_v_east[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+        
+    ...
+
+    return CF_Wind_North,CF_Wind_East,CF_Wind_South,CF_Wind_West
+\end{lstlisting}
+\begin{lstlisting}[caption=Function for calculating cost caused by wave (\autoref{Cost Wave}), label=calcostwave]
+def WaveResCosFun(Vs,Lbwl,B,rho_sea,wave_d,wave_h,dt):
+    """     
+    Written by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: calculate cost caused by wind
+    Method: STAwave-1
+    Parameters:
+        Vs: measured ship's speed over ground
+        Lbwl:  length of the bow on the water line to 95\% of maximum beam
+        rho_sea: mass density of sea
+        wave_d: wave direction
+        wave_h: significant height of waves
+        dt: time needed for travelling between two neighbour nodes
+    Return value:
+        CF_Wave_N: cost caused by wave, if travelling to north neighbour nodes
+        CF_Wave_E: cost caused by wave, if travelling to east neighbour nodes
+        CF_Wave_S: cost caused by wave, if travelling to south neighbour nodes
+        CF_Wave_W: cost caused by wave, if travelling to west neighbour nodes
+    """
+    angle_ship=np.mat([0,90,180,270])  #Angle of ship: North, East, South and West
+    for k in range(angle_ship.shape[1]):
+        angle_rel=np.mat(np.zeros(wave_d.shape))
+        R_wave=np.mat(np.zeros(wave_h.shape))
+        for i in range(wave_d.shape[0]):
+            for j in range(wave_h.shape[1]):
+                angle_rel[i,j]=wave_d[i,j]-angle_ship[0,k]
+                while angle_rel[i,j]<-180 or angle_rel[i,j]>=180:
+                    if angle_rel[i,j]< -180:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    if angle_rel[i,j]>=180:
+                        angle_rel[i,j]=angle_rel[i,j]-360
+                
+                if angle_rel[i,j]<-45 or angle_rel[i,j]>45:
+                    R_wave[i,j]=0
+                else:
+                    R_wave[i,j]=rho_sea*g*B*math.sqrt(B/Lbwl)/16*wave_h[i,j]**2
+                C_wave=R_wave*Vs*dt
+        if k==0:
+            CF_Wave_N=C_wave
+        if k==1:
+            CF_Wave_E=C_wave
+        if k==2:
+            CF_Wave_S=C_wave
+        if k==0:
+            CF_Wave_W=C_wave
+    return CF_Wave_N,CF_Wave_E,CF_Wave_S,CF_Wave_W
+\end{lstlisting}
+\begin{lstlisting}[caption=Rewritten Python script based on the given MATLAB script (\autoref{Cost Hull}), label=oricalcosthull]
+""" 
+Given in class
+Rewritten by Weijian Yang, email: weijiany@stud.ntnu.no
+Function: calculate cost caused by the reaction between hull and calm water
+Method: Hollenbach
+"""
+#input some data
+#Vsvec,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr
+Vsvec=float(input('Velocity of Ships(m/s):'))
+L=float(input('Length of Ship(meters):'))
+Lwl=float(input('Length of Water Line(meters):'))
+Los=float(input('Length over Surface(meters):'))
+B=float(input('Beam(meters):'))
+TF=float(input('Draft of Fore Propeller(meters):'))
+TA=float(input('Draft of Aft Propeller(meters):'))
+CB=float(input('Block coefficient:'))
+S=float(input('Wetted Surface(square meters):'))
+Dp=float(input('Propeller diameter(meters):'))
+NRud=float(input('Number of rudders:')) 
+NBrac=float(input('Number of brackets:'))
+NBoss=float(input('Number of bossings:'))
+NThr=float(input('Number of side thrusters:'))
+
+
+#Calculation of 'Froude length', Lfn:
+if Los/L < 1:
+    Lfn = Los
+elif (Los/L >= 1) & (Los/L < 1.1):
+    Lfn = L+2/3*(Los-L)
+elif Los/L >= 1.1:
+    Lfn = 1.0667*L
+
+# 'Mean' resistance coefficients
+a = np.mat([-0.3382, 0.8086, -6.0258, -3.5632, 9.4405, 0.0146, 0, 0, 0, 0]) #a1 means a[0,0]
+b = np.mat([[-0.57424, 13.3893, 90.5960],[4.6614, -39.721, -351.483],[-1.14215, -12.3296, 459.254]]) #b12 means b[0,1]
+d = np.mat([0.854, -1.228, 0.497])
+e = np.mat([2.1701, -0.1602])
+f  = np.mat([0.17, 0.20, 0.60])
+g = np.mat([0.642, -0.635, 0.150])
+#'Minimum' resistance coefficients
+a_min = np.mat([-0.3382,0.8086,-6.0258,-3.5632,0,0,0,0,0,0])
+b_min = np.mat([[-0.91424,13.3893,90.5960],[4.6614,-39.721,-351.483],[-1.14215,-12.3296,459.254]])
+d_min = np.mat([0,0,0])
+e_min = np.mat([1,0])
+f_min  = np.mat([0.17,0.2,0.6])
+g_min = np.mat([0.614,-0.717,0.261])
+
+cc = 0
+# Loop over velocities
+for i in range(Vsvec.size):
+    Vs = Vsvec[0,i]
+
+    cc = cc + 1
+
+    Fn = Vs/((gravk*Lfn)**0.5) #Froude's number
+    Fnkrit_help0=np.mat([1,CB,CB**2]) # Build Matrix for using transpose: Fnkrit_help0.T
+    Fnkrit_help1 = d*Fnkrit_help0.T  # Fnkrit_help1=[[x]]   Matrix type
+    Fnkrit=Fnkrit_help1[0,0]  # Fnkrit=x    Float type
+    c1 = Fn/Fnkrit
+    c1_min = Fn/Fnkrit
+    Rns = Vs*L/nu #Reynold's number for ship
+    if Rns == 0:  #Rns=0,log would get stuck
+        CFs =0
+    else :
+        CFs = 0.075/(math.log10(Rns)-2)**2 #ITTC friction line for ship
+
+    
+    # Calculation of C_R for given ship 
+    # Mean value
+    CRFnkrit = max(1.0,(Fn/Fnkrit)**c1)
+    kL = e[0,0]*L**(e[0,1])
+
+    # There is an error in the hollenbach paper and in Minsaas' 2003 textbook, which is corrected in this formula by dividing by 10
+    CRstandard_help0=np.mat([1,Fn,Fn**2])
+    CRstandard_help1=Fnkrit_help0*(b*CRstandard_help0.T)/10
+    CRstandard=CRstandard_help1[0,0]
+
+    #prod([T/B B/L Los/Lwl Lwl/L (1+(TA-TF)/L) Dp/TA (1+NRud) (1+NBrac) (1+NBoss) (1+NThr)].^a)
+    prod_help=np.mat([T/B,B/L,Los/Lwl,Lwl/L,1+(TA-TF)/L,Dp/TA,1+NRud,1+NBrac,1+NBoss,1+NThr])
+    prod_help1=np.mat(np.ones((1,10))) #build a Matrix[1,10]
+    for j in range(a.size):  #prod_help=[prod_help[0,i].^a_min[0,i]]
+            prod_help1[0,j]=prod_help[0,j]**a[0,j]
+    prod_help2=np.prod(prod_help1,axis = 1) #prod function
+    prod=prod_help2[0,0]
+
+    CR_hollenbach = CRstandard*CRFnkrit*kL*prod
+    CR = CR_hollenbach*B*T/S #Resistance coefficient, scaled for wetted surface
+    C_Ts = CFs + CR  #Total resistance coeff. ship 
+    R_T_mean = C_Ts*rho/2*Vs**2*S #Total resistance to the ship
+
+    #Minimum values
+
+    #There is an error in the hollenbach paper and in Minsaas' 2003 textbook, which is corrected in this formula by dividing by 10
+    CRstandard_min_help = Fnkrit_help0*(b_min*CRstandard_help0.T)/10
+    CRstandard_min=CRstandard_min_help[0,0]
+    #prod([T/B B/L Los/Lwl Lwl/L (1+(TA-TF)/L) Dp/TA (1+NRud) (1+NBrac) (1+NBoss) (1+NThr)].^a_min)
+    prod_help_min1=np.mat(np.ones((1,10))) 
+    for j in range(a_min.size):                                            #prod_help=[prod_help[0,i].^a_min[0,i]]
+            prod_help_min1[0,j]=prod_help[0,j]**a_min[0,j]
+    prod_help_min2=np.prod(prod_help_min1,axis = 1)                 #prod function
+    prod_min=prod_help_min2[0,0]
+
+    CR_hollenbach_min = CRstandard_min*prod_min
+    CR_min = CR_hollenbach_min*B*T/S
+
+
+    # Total resistance coefficient of the ship 
+    C_Ts_min = CFs + CR_min
+    # Total resistance	
+    R_T_min = C_Ts_min*rho/2*Vs**2*S
+    #Propulsion power
+    P_E_mean = R_T_mean * Vs       #[W]
+    P_E_min = R_T_min * Vs             #[W]
+
+    #print sth.
+    # print('Vs =', Vs/0.5144,'knots')
+    # print('Mean values')
+    # print('CRh:',CR)
+    # print('CF:',CFs)
+    # print('CT:',C_Ts)
+    # print('RT:',R_T_mean,'N')
+    # print('Minimum values')
+    # print('CRh:',CR_min)
+    # print('CF:',CFs)
+    # print('CT:',C_Ts_min)
+    # print('RT:',R_T_min)
+
+    # % Store results for plotting
+    CFsvec = np.mat(np.zeros((1,Vsvec.size)))
+    CRvec = np.mat(np.zeros((1,Vsvec.size)))
+    C_Tsvec = np.mat(np.zeros((1,Vsvec.size)))
+    R_T_meanvec = np.mat(np.zeros((1,Vsvec.size)))
+    CR_minvec = np.mat(np.zeros((1,Vsvec.size)))
+    C_Ts_minvec = np.mat(np.zeros((1,Vsvec.size)))
+    R_T_minvec = np.mat(np.zeros((1,Vsvec.size)))
+    P_E_meanvec = np.mat(np.zeros((1,Vsvec.size)))
+    P_E_minvec = np.mat(np.zeros((1,Vsvec.size)))
+    CFsvec[0,i] = CFs
+    CRvec[0,i] = CR
+    C_Tsvec[0,i] = C_Ts
+    R_T_meanvec[0,i] = R_T_mean
+    CR_minvec[0,i] = CR_min
+    C_Ts_minvec[0,i] = C_Ts_min
+    R_T_minvec[0,i] = R_T_min
+    P_E_meanvec[0,i] = P_E_mean
+    P_E_minvec[0,i] = P_E_min
+
+#This is the returned matrix
+resistancedata =np.hstack((Vsvec.T,R_T_meanvec.T,R_T_minvec.T,P_E_meanvec.T,P_E_minvec.T))   
+\end{lstlisting}
+\begin{lstlisting}[caption=Function for calculating cost caused by the reaction between hull and calm water(\autoref{Cost Hull}), label=calcosthull]
+def TotalResCosFun(Vs,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,dt):
+    """     
+    Modified by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: calculate cost caused by the reaction between hull and calm water
+    Method: Hollenbach
+    Parameters:
+        Vs: measured ship's speed over ground
+        L: length between perpendiculars
+        Lwl: length of water line
+        Los: length over surface
+        B: beam
+        TA: draught of aft propeller
+        TF: draught of fore propeller
+        CB: block coefficient
+        S: wetted surface
+        Dp: propeller diameter
+        NRud: number of rudders
+        NBrac: number of brackets
+        NBoss: number of bossings
+        NThr: number of side thrusters
+        rho_sea: mass density of sea
+        nu_sea: mass viscosity of sea
+        g: gravitational acceleration
+        dt: time needed for travelling between two neighbour nodes
+    Return value:
+        C_T: cost caused by the reaction between hull and calm water
+    """
+   rho = 1025         #Density of sea water [kg/m^3]
+   gravk = 9.81       #Gravitational constant [m/s^2]
+   nu = 1.1395E-6  #Viscosity of sea water [m/s^2]
+
+   T = (TF+TA)/2
+   """ Calculation of 'Froude length', Lfn """ 
+   if Los/L < 1:
+      Lfn = Los
+   elif (Los/L >= 1) & (Los/L < 1.1):
+      Lfn = L+2/3*(Los-L)
+   elif Los/L >= 1.1:
+      Lfn = 1.0667*L
+
+   # 'Mean' resistance coefficients
+   a = np.mat([-0.3382, 0.8086, -6.0258, -3.5632, 9.4405, 0.0146, 0, 0, 0, 0]) #a1 means a[0,0]
+   b = np.mat([[-0.57424, 13.3893, 90.5960],[4.6614, -39.721, -351.483],[-1.14215, -12.3296, 459.254]]) #b12 means b[0,1]
+   d = np.mat([0.854, -1.228, 0.497])
+   e = np.mat([2.1701, -0.1602])
+   f  = np.mat([0.17, 0.20, 0.60])
+   g = np.mat([0.642, -0.635, 0.150])
+
+   Fn = Vs/((gravk*Lfn)**0.5) #Froude's number
+   Fnkrit_help0=np.mat([1,CB,CB**2]) # Build Matrix for using transpose: Fnkrit_help0.T
+   Fnkrit_help1 = d*Fnkrit_help0.T # Fnkrit_help1=[[x]] Matrix type
+   Fnkrit=Fnkrit_help1[0,0] # Fnkrit=x  Float type
+   c1 = Fn/Fnkrit
+   Rns = Vs*L/nu #Reynold's number for ship
+   if Rns == 0: #Rns=0,log would get stuck
+      CFs =0
+   else :
+      CFs = 0.075/(math.log10(Rns)-2)**2 #ITTC friction line for ship
+
+   """  Calculation of C_R for given ship  """ 
+   # Mean value
+   CRFnkrit = max(1.0,(Fn/Fnkrit)**c1)
+   kL = e[0,0]*L**(e[0,1])
+
+   # There is an error in the hollenbach paper and in Minsaas' 2003 textbook, which is corrected in this formula by dividing by 10
+   CRstandard_help0=np.mat([1,Fn,Fn**2])
+   CRstandard_help1=Fnkrit_help0*(b*CRstandard_help0.T)/10
+   CRstandard=CRstandard_help1[0,0]
+
+   #prod([T/B B/L Los/Lwl Lwl/L (1+(TA-TF)/L) Dp/TA (1+NRud) (1+NBrac) (1+NBoss) (1+NThr)].^a)
+   prod_help=np.mat([T/B,B/L,Los/Lwl,Lwl/L,1+(TA-TF)/L,Dp/TA,1+NRud,1+NBrac,1+NBoss,1+NThr])
+   prod_help1=np.mat(np.ones((1,10))) #build a Matrix[1,10]
+   for j in range(a.size): #prod_help=[prod_help[0,i].^a_min[0,i]]
+            prod_help1[0,j]=prod_help[0,j]**a[0,j]
+   prod_help2=np.prod(prod_help1,axis = 1) #prod function
+   prod=prod_help2[0,0]
+
+   CR_hollenbach = CRstandard*CRFnkrit*kL*prod
+   CR = CR_hollenbach*B*T/S #Resistance coefficient, scaled for wetted surface
+   C_Ts = CFs + CR #Total resistance coeff. ship 
+   R_T_mean = C_Ts*rho/2*Vs**2*S #Total resistance to the ship
+   
+   Fn_min=min(f[0,0],f[0,0]+f[0,1]*(f[0,2]-CB))
+   Fn_max=g[0,0]+g[0,1]*CB+g[0,2]*CB**3
+
+   if Fn>Fn_max:
+      #R_T=h1*R_T_mean 
+      R_T=1.204*R_T_mean  #h1=1.204
+   elif Fn<Fn_min:
+      #CRFnkrit=kL=1.0
+      CR_min=CRstandard*prod*B*T/S
+      R_T= (CFs + CR_min)*rho/2*Vs**2*S
+   else:
+      R_T=R_T_mean
+   
+   C_T = R_T*Vs*dt
+   return C_T
+\end{lstlisting}
+\begin{lstlisting}[caption=Grid based Dijkstra planning (Atsushi's project)(\autoref{Pathfinding}), label=Atsushi]
+"""
+Grid based Dijkstra planning
+author: Atsushi Sakai
+link: https://github.com/AtsushiSakai/PythonRobotics/blob/master/PathPlanning/Dijkstra/dijkstra.py
+"""
+
+import matplotlib.pyplot as plt
+import math
+
+show_animation = True
+
+
+class Dijkstra:
+
+    def __init__(self, ox, oy, resolution, robot_radius):
+        """
+        Initialize map for a star planning
+        ox: x position list of Obstacles [m]
+        oy: y position list of Obstacles [m]
+        resolution: grid resolution [m]
+        rr: robot radius[m]
+        """
+
+        self.min_x = None
+        self.min_y = None
+        self.max_x = None
+        self.max_y = None
+        self.x_width = None
+        self.y_width = None
+        self.obstacle_map = None
+
+        self.resolution = resolution
+        self.robot_radius = robot_radius
+        self.calc_obstacle_map(ox, oy)
+        self.motion = self.get_motion_model()
+
+    class Node:
+        def __init__(self, x, y, cost, parent_index):
+            self.x = x  # index of grid
+            self.y = y  # index of grid
+            self.cost = cost
+            self.parent_index = parent_index  # index of previous Node
+
+        def __str__(self):
+            return str(self.x) + "," + str(self.y) + "," + str(
+                self.cost) + "," + str(self.parent_index)
+
+    def planning(self, sx, sy, gx, gy):
+        """
+        dijkstra path search
+        input:
+            s_x: start x position [m]
+            s_y: start y position [m]
+            gx: goal x position [m]
+            gx: goal x position [m]
+        output:
+            rx: x position list of the final path
+            ry: y position list of the final path
+        """
+
+        start_node = self.Node(self.calc_xy_index(sx, self.min_x),
+                               self.calc_xy_index(sy, self.min_y), 0.0, -1)
+        goal_node = self.Node(self.calc_xy_index(gx, self.min_x),
+                              self.calc_xy_index(gy, self.min_y), 0.0, -1)
+
+        open_set, closed_set = dict(), dict()
+        open_set[self.calc_index(start_node)] = start_node
+
+        while 1:
+            c_id = min(open_set, key=lambda o: open_set[o].cost)
+            current = open_set[c_id]
+
+            # show graph
+            if show_animation:  # pragma: no cover
+                plt.plot(self.calc_position(current.x, self.min_x),
+                         self.calc_position(current.y, self.min_y), "xc")
+                # for stopping simulation with the esc key.
+                plt.gcf().canvas.mpl_connect(
+                    'key_release_event',
+                    lambda event: [exit(0) if event.key == 'escape' else None])
+                if len(closed_set.keys()) % 10 == 0:
+                    plt.pause(0.001)
+
+            if current.x == goal_node.x and current.y == goal_node.y:
+                print("Find goal")
+                goal_node.parent_index = current.parent_index
+                goal_node.cost = current.cost
+                break
+
+            # Remove the item from the open set
+            del open_set[c_id]
+
+            # Add it to the closed set
+            closed_set[c_id] = current
+
+            # expand search grid based on motion model
+            for move_x, move_y, move_cost in self.motion:
+                node = self.Node(current.x + move_x,
+                                 current.y + move_y,
+                                 current.cost + move_cost, c_id)
+                n_id = self.calc_index(node)
+
+                if n_id in closed_set:
+                    continue
+
+                if not self.verify_node(node):
+                    continue
+
+                if n_id not in open_set:
+                    open_set[n_id] = node  # Discover a new node
+                else:
+                    if open_set[n_id].cost >= node.cost:
+                        # This path is the best until now. record it!
+                        open_set[n_id] = node
+
+        rx, ry = self.calc_final_path(goal_node, closed_set)
+
+        return rx, ry
+
+    def calc_final_path(self, goal_node, closed_set):
+        # generate final course
+        rx, ry = [self.calc_position(goal_node.x, self.min_x)], [
+            self.calc_position(goal_node.y, self.min_y)]
+        parent_index = goal_node.parent_index
+        while parent_index != -1:
+            n = closed_set[parent_index]
+            rx.append(self.calc_position(n.x, self.min_x))
+            ry.append(self.calc_position(n.y, self.min_y))
+            parent_index = n.parent_index
+
+        return rx, ry
+
+    def calc_position(self, index, minp):
+        pos = index * self.resolution + minp
+        return pos
+
+    def calc_xy_index(self, position, minp):
+        return round((position - minp) / self.resolution)
+
+    def calc_index(self, node):
+        return (node.y - self.min_y) * self.x_width + (node.x - self.min_x)
+
+    def verify_node(self, node):
+        px = self.calc_position(node.x, self.min_x)
+        py = self.calc_position(node.y, self.min_y)
+
+        if px < self.min_x:
+            return False
+        if py < self.min_y:
+            return False
+        if px >= self.max_x:
+            return False
+        if py >= self.max_y:
+            return False
+
+        if self.obstacle_map[node.x][node.y]:
+            return False
+
+        return True
+
+    def calc_obstacle_map(self, ox, oy):
+
+        self.min_x = round(min(ox))
+        self.min_y = round(min(oy))
+        self.max_x = round(max(ox))
+        self.max_y = round(max(oy))
+        print("min_x:", self.min_x)
+        print("min_y:", self.min_y)
+        print("max_x:", self.max_x)
+        print("max_y:", self.max_y)
+
+        self.x_width = round((self.max_x - self.min_x) / self.resolution)
+        self.y_width = round((self.max_y - self.min_y) / self.resolution)
+        print("x_width:", self.x_width)
+        print("y_width:", self.y_width)
+
+        # obstacle map generation
+        self.obstacle_map = [[False for _ in range(self.y_width)]
+                             for _ in range(self.x_width)]
+        for ix in range(self.x_width):
+            x = self.calc_position(ix, self.min_x)
+            for iy in range(self.y_width):
+                y = self.calc_position(iy, self.min_y)
+                for iox, ioy in zip(ox, oy):
+                    d = math.hypot(iox - x, ioy - y)
+                    if d <= self.robot_radius:
+                        self.obstacle_map[ix][iy] = True
+                        break
+
+    @staticmethod
+    def get_motion_model():
+        # dx, dy, cost
+        motion = [[1, 0, 1],
+                  [0, 1, 1],
+                  [-1, 0, 1],
+                  [0, -1, 1],
+                  [-1, -1, math.sqrt(2)],
+                  [-1, 1, math.sqrt(2)],
+                  [1, -1, math.sqrt(2)],
+                  [1, 1, math.sqrt(2)]]
+
+        return motion
+
+
+def main():
+    print(__file__ + " start!!")
+
+    # start and goal position
+    sx = -5.0  # [m]
+    sy = -5.0  # [m]
+    gx = 50.0  # [m]
+    gy = 50.0  # [m]
+    grid_size = 2.0  # [m]
+    robot_radius = 1.0  # [m]
+
+    # set obstacle positions
+    ox, oy = [], []
+    for i in range(-10, 60):
+        ox.append(i)
+        oy.append(-10.0)
+    for i in range(-10, 60):
+        ox.append(60.0)
+        oy.append(i)
+    for i in range(-10, 61):
+        ox.append(i)
+        oy.append(60.0)
+    for i in range(-10, 61):
+        ox.append(-10.0)
+        oy.append(i)
+    for i in range(-10, 40):
+        ox.append(20.0)
+        oy.append(i)
+    for i in range(0, 40):
+        ox.append(40.0)
+        oy.append(60.0 - i)
+
+    if show_animation:  # pragma: no cover
+        plt.plot(ox, oy, ".k")
+        plt.plot(sx, sy, "og")
+        plt.plot(gx, gy, "xb")
+        plt.grid(True)
+        plt.axis("equal")
+
+    dijkstra = Dijkstra(ox, oy, grid_size, robot_radius)
+    rx, ry = dijkstra.planning(sx, sy, gx, gy)
+
+    if show_animation:  # pragma: no cover
+        plt.plot(rx, ry, "-r")
+        plt.pause(0.01)
+        plt.show()
+
+
+if __name__ == '__main__':
+    main()
+\end{lstlisting}
+\begin{lstlisting}[caption=Function for finding the efficient path under a given speed (\autoref{Pathfinding}), label=moddijk]
+class Dijkstra:
+    """     
+    Modified by Weijian Yang, email: weijiany@stud.ntnu.no
+    Function: find the efficient path for a given velocity
+    Method: Dijkstra          
+    Parameters:
+        ox: x position list of boundaries (Obstacles)
+        oy: y position list of boundaries (Obstacles)
+        sx: x position of the start point
+        sy: y position of the start point
+        gx: x position of the goal point
+        gy: y position of the goal point
+        CF_N: costs of movements in north direction
+        CF_E: costs of movements in east direction
+        CF_S: costs of movements in south direction
+        CF_W: costs of movements in west direction
+    Return values:
+        rx: x position list of current path
+        ry: y position list of current path
+        goal_node.cost: total cost of current path
+    """  
+    def __init__(self, ox, oy):
+        # initialize parameters
+        self.min_x = None
+        self.max_x = None
+        self.min_y = None
+        self.max_y = None
+        self.x_grid_num = None
+        self.y_grid_num = None
+        self.obstacle_map = None
+
+        self.calc_obstacle_grid_map(ox, oy) 
+
+    def calc_obstacle_grid_map(self, ox, oy):
+        """ build obstacle map """
+        """             
+            Parameters:
+                ox: x position list of boundaries (Obstacles)
+                oy: y position list of boundaries (Obstacles)
+        """
+        # 1. get boundaries' values of the environment
+        self.min_x = round(min(ox))
+        self.max_x = round(max(ox))
+        self.min_y = round(min(oy))
+        self.max_y = round(max(oy))
+
+        # 2. calculate needed numbers of x,y in map
+        self.x_grid_num = round(self.max_x - self.min_x)
+        self.y_grid_num = round(self.max_y - self.min_y)
+
+        # 3. obstacle map generation
+        self.obstacle_map = [[False for _ in range(self.x_grid_num)] for _ in range(self.y_grid_num)]
+
+    def planning(self, sx, sy, gx, gy ,CF_N,CF_E,CF_S,CF_W):
+        """ dijkstra path search """
+        """ 
+            Parameters:
+                sx: x position of the start point
+                sy: y position of the start point
+                gx: x position of the goal point
+                gy: y position of the goal point
+                CF_N: costs of movements in north direction
+                CF_E: costs of movements in east direction
+                CF_S: costs of movements in south direction
+                CF_W: costs of movements in west direction
+            Return values:
+                rx: x position list of current path
+                ry: y position list of current path
+                goal_node.cost: total cost of current path
+            """
+        # 1. get start_node, goal_node
+        sx_index = self.calc_xy_index(sx, self.min_x)
+        sy_index = self.calc_xy_index(sy, self.min_y)
+        gx_index = self.calc_xy_index(gx, self.min_x)
+        gy_index = self.calc_xy_index(gy, self.min_y)
+        start_node = self.Node(sx_index, sy_index, 0.0, -1)
+        goal_node = self.Node(gx_index, gy_index, 0.0, -1)
+
+        # 2. initialize open_set, close_set, put start_node into open_set
+        open_set, close_set = dict(), dict()
+        open_set[self.calc_index(start_node)] = start_node
+
+        # 3. search
+        while True:
+            # (1). choose the node whose cost is minimum in open_set
+            c_id = min(open_set, key=lambda o: open_set[o].cost)
+            current = open_set[c_id]
+            
+            if show: 
+                plt.plot(self.calc_position(current.x, self.min_x),
+                            self.calc_position(current.y, self.min_y), "xc")
+                # for stopping simulation with the esc key.
+                # plt.gcf().canvas.mpl_connect(
+                #     'key_release_event',
+                #     lambda event: [exit(0) if event.key == 'escape' else None])
+                if len(close_set.keys()) % 10 == 0:
+                    plt.pause(0.001)
+
+            # (2). determine whether the current node is the end point
+            if current.x == goal_node.x and current.y == goal_node.y:
+                goal_node.parent_index = current.parent_index
+                goal_node.cost = current.cost
+                break
+
+            # (3). remove the current node from the open set, add it to the closed set
+            del open_set[c_id]
+            close_set[c_id] = current
+
+            # (4). expand search grid based on motion model
+            self.robot_motion = self.get_motion_model(current.x,current.y,CF_N,CF_E,CF_S,CF_W)
+            for move_x, move_y, move_cost in self.robot_motion:
+                node = self.Node(current.x + move_x,
+                                    current.y + move_y,
+                                    current.cost + move_cost, c_id)
+                n_id = self.calc_index(node)
+
+                if n_id in close_set:
+                    continue
+
+                if not self.verify_node(node):
+                    continue
+
+                if n_id not in open_set:
+                    open_set[n_id] = node   # discover a new node
+                else:
+                    if open_set[n_id].cost >= node.cost:
+                        # This path is the best until now. record it!
+                        open_set[n_id] = node
+
+        rx, ry = self.calc_final_path(goal_node, close_set)
+
+        return rx, ry, goal_node.cost
+
+    def calc_final_path(self, goal_node, close_set):
+        """ generate final course """
+        rx = [self.calc_position(goal_node.x, self.min_x)]
+        ry = [self.calc_position(goal_node.y, self.min_y)]
+        
+        parent_index = goal_node.parent_index
+        while parent_index != -1:
+            n = close_set[parent_index]
+            rx.append(self.calc_position(n.x, self.min_x))
+            ry.append(self.calc_position(n.y, self.min_y))
+            parent_index = n.parent_index
+            
+        return rx, ry
+
+    class Node:
+        def __init__(self, x, y, cost,parent_index):
+            self.x = x      
+            self.y = y      
+            self.cost = cost       # g(n)
+            self.parent_index = parent_index    
+        #
+        # def __str__(self):
+        #     return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
+    """ 
+    These 3 functions calc_index, calc_xy_index and calc_position are used for coordinate system transformation
+    However, in this project, they are useless because values of x and y in grid map coordinates and xy map are the same.
+    """
+    def calc_index(self, node):
+        index = node.y * self.x_grid_num + node.x
+        return index
+
+    def calc_xy_index(self, pos, min_p):
+        index = round(pos - min_p)
+        return index
+
+    def calc_position(self, index, min_p):
+        pos = min_p + index
+        return pos
+
+    def verify_node(self, node):
+        """ check whether the current position is appropriate """
+        px = self.calc_position(node.x, self.min_x)
+        py = self.calc_position(node.y, self.min_y)
+
+        if px < self.min_x or px > self.max_x:
+            return False
+        if py < self.min_x or py > self.max_y:
+            return False
+
+        return True
+
+    @staticmethod
+    def get_motion_model(x,y,CF_N,CF_E,CF_S,CF_W):
+        # dx, dy, cost
+        data_x=x
+        data_y=y
+        model = [
+            [0, 1, CF_N[data_x,data_y+1]],         # North
+            [0, -1,CF_S[data_x,data_y-1]],          # South
+            [-1, 0,CF_E[data_x-1,data_y]],          # East
+            [1, 0, CF_W[data_x+1,data_y]],        # West
+        ]
+        return model
+\end{lstlisting}
+\begin{lstlisting}[caption=Codes for choosing the optimum speed (\autoref{Effective velocity}), label=ChoOptVel]
+...
+""" Build boundary """
+ox, oy = [], []
+for i in range(0, xcol):        #north boundary
+    ox.append(i)
+    oy.append(xcol)
+for i in range(0, yrow):         #east boundary
+    ox.append(0)
+    oy.append(i)
+for i in range(0, xcol):        #south boundary
+    ox.append(i)
+    oy.append(0)
+for i in range(0, yrow):         #west boundary
+    ox.append(yrow)
+    oy.append(i)
+dijkstra = Dijkstra(ox, oy)
+
+T_cost=np.mat(np.zeros((1,num_iter)))
+TotalCost=T_cost
+show = False
+for i in range(num_iter):
+    length=(abs(sx-gx)+abs(sy-gy))+i
+    """ 
+    find minimum cost in each velocity
+    Vs_min=(abs(sx-gx)+abs(sy-gy))/t
+    Vs_max=xcol*yrow/t
+    """
+    Vs=float(length*dist/t)
+    delta_T=dist/Vs
+
+    """calculate cost for each given velocity"""
+    CF_Wind_N,CF_Wind_E,CF_Wind_S,CF_Wind_W = WindResCosFun(Vs,Axv,rho_air,wind_u,wind_v,Cair_extend,delta_T)
+    CF_m=TotalResCosFun(Vs,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,delta_T)
+    CF_Wave_N,CF_Wave_E,CF_Wave_S,CF_Wave_W=WaveResCosFun(Vs,Lbwl,B,rho_sea,wave_d,wave_h,delta_T)
+    CF_N=CF_Wind_N+CF_Wave_N+CF_m
+    CF_E=CF_Wind_E+CF_Wave_E+CF_m
+    CF_S=CF_Wind_S+CF_Wave_S+CF_m
+    CF_W=CF_Wind_W+CF_Wave_W+CF_m
+
+    """find an efficient path for each given velocity"""
+    rx, ry, T_cost[0,i] = dijkstra.planning(sx, sy, gx, gy,CF_N,CF_E,CF_S,CF_W)
+
+    """check task time"""
+    if len(rx)*delta_T>t:
+        # print('The ship cannot reach the goal point in given time with this speed',Vs ,' [m/s]')
+        print('The ship cannot reach the goal point in given time with this speed',Vs/0.5144 ,' [knot]')
+        TotalCost[0,i]=0
+    else:
+        # print('The ship could reach the goal point in given time with this speed',Vs ,' [m/s]')
+        print('The ship could reach the goal point in given time with this speed',Vs/0.5144 ,' [knot]')
+        TotalCost[0,i]=T_cost[0,i]
+if np.max(TotalCost)==0:
+    print('The effective path could not be found after ',num_iter,' iterations' )
+else:
+
+    """compare total costs of paths"""
+    minx,miny= np.where(TotalCost == np.min(TotalCost[np.nonzero(TotalCost)]))
+
+    """get optimum velocity"""
+    length_E=(abs(sx-gx)+abs(sy-gy))+miny
+    Vs_E=float(length_E*dist/t)
+    delta_TE=dist/Vs_E
+    CFE_Wind_N,CFE_Wind_E,CFE_Wind_S,CFE_Wind_W = WindResCosFun(Vs_E,Axv,rho_air,wind_u,wind_v,Cair_extend,delta_T)
+    CFE_m=TotalResCosFun(Vs_E,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,delta_T)
+    CFE_Wave_N,CFE_Wave_E,CFE_Wave_S,CFE_Wave_W=WaveResCosFun(Vs_E,Lbwl,B,rho_sea,wave_d,wave_h,delta_T)
+    CFE_N=CFE_Wind_N+CFE_Wave_N+CFE_m
+    CFE_E=CFE_Wind_E+CFE_Wave_E+CFE_m
+    CFE_S=CFE_Wind_S+CFE_Wave_S+CFE_m
+    CFE_W=CFE_Wind_W+CFE_Wave_W+CFE_m
+    show = True
+    if show:
+        plt.plot(ox, oy, '.k')
+        plt.plot(sx, sy, 'og')
+        plt.plot(gx, gy, 'or')
+        # plt.grid('True')
+        plt.axis('equal')
+        # plt.show()
+
+    """get optimum path for this optimum velocity"""
+    rx, ry, TotalCost_min = dijkstra.planning(sx, sy, gx, gy,CFE_N,CFE_E,CFE_S,CFE_W)
+    if show:
+        print('Find the effective path' )
+...
+\end{lstlisting}
+\section{Testing codes}
+\begin{lstlisting}[caption=Testing codes (\autoref{TestResults}), label=TestCodes]
+"""
+Program tests
+Course: TMR 4345 
+Project: Ship Routing
+Author: Weijian Yang, email: weijiany@stud.ntnu.no
+"""
+import math
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+## Function for importing data from Csv file
+## numpy -> delimiter = ";"
+def ReadCsvWind(filepath,xcol,yrow):
+    file = open(filepath, "rb")
+    filedata=np.loadtxt(file, delimiter=";")
+    file.close()
+    filearray=np.array(filedata)
+    # +2: just in case for that: data is not enough for grid
+    num_row=xcol+2                  
+    num_col=yrow+2
+    dataname = np.zeros(shape=(num_row,num_col))
+    for i in range(num_row):
+        for j in range(num_col):
+            dataname[i,j]=filearray[i, j]
+    return dataname
+## pandas -> delimiter = "rows & columns"
+def ReadCsvWave(filepath,xcol,yrow):
+    file =pd.read_csv(filepath)
+    # +2: just in case for that: data is not enough for grid
+    num_row=xcol+2 
+    num_col=yrow+2
+    dataname = file.values[0:num_row,0:num_col]
+    return dataname
+## Function for calculating wind resistance:
+## R=0.5*rho_air*Avx*[Cair(relative wind angle)*V(relative wind velocity)^2-Cair(0)*V(ship velocity)^2]
+def WindResCosFun(Vs,Axv,rho_air,wind_u,wind_v,Cair_extend,dt):
+    angle_ship=np.mat([0,90,180,270])  #Angle of ship: North, East, South and West
+    for k in range(angle_ship.shape[1]):
+        vel_wind_squre=np.mat(np.zeros(wind_v.shape))
+        vel_wt_squre=np.mat(np.zeros(wind_u.shape))
+        angle_wt=np.mat(np.zeros(wind_u.shape))
+        angle_wt_rel=np.mat(np.zeros(wind_v.shape))
+        angle_rel=np.mat(np.zeros(wind_u.shape))
+        Cx=np.mat(np.zeros(wind_v.shape))
+        if k == 0:
+            wind_u_north=wind_u+Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u_north[i, j]**2+wind_v[i, j]**2     #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                        angle_wt[i,j]=math.degrees(math.acos(wind_v[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+                    
+                    angle_wt_rel[i,j]=angle_wt[i,j]-angle_ship[0,k]+180         #Awt-Aship
+                    vel_wind_squre[i,j]=vel_wt_squre[i,j]+Vs**2+math.sqrt(vel_wt_squre[i,j])*Vs*math.cos(math.radians(angle_wt_rel[i,j])) #V_WRef
+                    nume=math.sqrt(vel_wt_squre[i,j])*math.sin(math.radians(angle_wt_rel[i,j]))
+                    deno=Vs+math.sqrt(vel_wt_squre[i,j])*math.cos(math.radians(angle_wt_rel[i,j]))
+                    if deno==0:
+                        if nume<0:
+                            angle_rel[i,j]=-90
+                        if nume>0:
+                            angle_rel[i,j]=90
+                        if nume==0:
+                            angle_rel[i,j]=0
+                    elif deno<0:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))+180       #A_WRef
+                    else:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))
+                    if angle_rel[i,j]< 0:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    
+                    weight=angle_rel[i,j]/10
+                    index=int(angle_rel[i,j]//10)
+                    Cx[i,j]=(weight-index)*Cair_extend[0,index+1]+(1-weight+index)*Cair_extend[0,index]
+            Rwind_N=0.5*rho_air*Axv*(Cx*vel_wind_squre-Cair_extend[0,0]*Vs**2)
+            CF_Wind_North=Rwind_N*Vs*dt
+
+        if k == 1:
+            wind_v_east=wind_v+Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u[i, j]**2+wind_v_east[i, j]**2     #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                        angle_wt[i,j]=math.degrees(math.asin(wind_v_east[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+                    
+                    angle_wt_rel[i,j]=angle_wt[i,j]-angle_ship[0,k]+180         #Awt-Aship
+                    vel_wind_squre[i,j]=vel_wt_squre[i,j]+Vs**2+math.sqrt(vel_wt_squre[i,j])*Vs*math.cos(math.radians(angle_wt_rel[i,j])) #V_WRef
+                    nume=math.sqrt(vel_wt_squre[i,j])*math.sin(math.radians(angle_wt_rel[i,j]))
+                    deno=Vs+math.sqrt(vel_wt_squre[i,j])*math.cos(math.radians(angle_wt_rel[i,j]))
+                    if deno==0:
+                        if nume<0:
+                            angle_rel[i,j]=-90
+                        if nume>0:
+                            angle_rel[i,j]=90
+                        if nume==0:
+                            angle_rel[i,j]=0
+                    elif deno<0:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))+180       #A_WRef
+                    else:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))
+                    if angle_rel[i,j]< 0:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    
+                    weight=angle_rel[i,j]/10
+                    index=int(angle_rel[i,j]//10)
+                    Cx[i,j]=(weight-index)*Cair_extend[0,index+1]+(1-weight+index)*Cair_extend[0,index]
+            Rwind_E=0.5*rho_air*Axv*(Cx*vel_wind_squre-Cair_extend[0,0]*Vs**2)
+            CF_Wind_East=Rwind_E*Vs*dt
+
+        if k == 2:
+            wind_u_south=wind_u-Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u_south[i,j]**2+wind_v[i,j]**2     #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                        angle_wt[i,j]=math.degrees(math.acos(wind_v[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+                    
+                    angle_wt_rel[i,j]=angle_wt[i,j]-angle_ship[0,k]+180         #Awt-Aship
+                    vel_wind_squre[i,j]=vel_wt_squre[i,j]+Vs**2+math.sqrt(vel_wt_squre[i,j])*Vs*math.cos(math.radians(angle_wt_rel[i,j])) #V_WRef
+                    nume=math.sqrt(vel_wt_squre[i,j])*math.sin(math.radians(angle_wt_rel[i,j]))
+                    deno=Vs+math.sqrt(vel_wt_squre[i,j])*math.cos(math.radians(angle_wt_rel[i,j]))
+                    if deno==0:
+                        if nume<0:
+                            angle_rel[i,j]=-90
+                        if nume>0:
+                            angle_rel[i,j]=90
+                        if nume==0:
+                            angle_rel[i,j]=0
+                    elif deno<0:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))+180       #A_WRef
+                    else:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))
+                    if angle_rel[i,j]< 0:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    
+                    weight=angle_rel[i,j]/10
+                    index=int(angle_rel[i,j]//10)
+                    Cx[i,j]=(weight-index)*Cair_extend[0,index+1]+(1-weight+index)*Cair_extend[0,index]
+            Rwind_S=0.5*rho_air*Axv*(Cx*vel_wind_squre-Cair_extend[0,0]*Vs**2)
+            CF_Wind_South=Rwind_S*Vs*dt
+        
+        if k == 3:
+            wind_v_west=wind_v-Vs
+            for i in range(wind_u.shape[0]):
+                for j in range(wind_v.shape[1]):
+                    vel_wt_squre[i,j]=wind_u[i, j]**2+wind_v_west[i, j]**2     #Vwt:true wind velocity
+                    if vel_wt_squre[i,j]==0:
+                        angle_wt[i,j]=0
+                    else:
+                        angle_wt[i,j]=math.degrees(math.asin(wind_v_west[i,j]/math.sqrt(vel_wt_squre[i,j]))) #Awt:true wind direction
+                    
+                    angle_wt_rel[i,j]=angle_wt[i,j]-angle_ship[0,k]+180         #Awt-Aship
+                    vel_wind_squre[i,j]=vel_wt_squre[i,j]+Vs**2+math.sqrt(vel_wt_squre[i,j])*Vs*math.cos(math.radians(angle_wt_rel[i,j])) #V_WRef
+                    nume=math.sqrt(vel_wt_squre[i,j])*math.sin(math.radians(angle_wt_rel[i,j]))
+                    deno=Vs+math.sqrt(vel_wt_squre[i,j])*math.cos(math.radians(angle_wt_rel[i,j]))
+                    if deno==0:
+                        if nume<0:
+                            angle_rel[i,j]=-90
+                        if nume>0:
+                            angle_rel[i,j]=90
+                        if nume==0:
+                            angle_rel[i,j]=0
+                    elif deno<0:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))+180       #A_WRef
+                    else:
+                        angle_rel[i,j]=math.degrees(math.atan(nume/deno))
+                    if angle_rel[i,j]< 0:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    
+                    weight=angle_rel[i,j]/10
+                    index=int(angle_rel[i,j]//10)
+                    Cx[i,j]=(weight-index)*Cair_extend[0,index+1]+(1-weight+index)*Cair_extend[0,index]
+            Rwind_W=0.5*rho_air*Axv*(Cx*vel_wind_squre-Cair_extend[0,0]*Vs**2)
+            CF_Wind_West=Rwind_W*Vs*dt
+
+    return CF_Wind_North,CF_Wind_East,CF_Wind_South,CF_Wind_West
+## Function for calculating total resistance (only constant velocity)
+## Hollenbach Method (only return mean resistance)
+def TotalResCosFun(Vs,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,dt): 
+    rho = 1025         #Density of sea water [kg/m^3]
+    gravk = 9.81       #Gravitational constant [m/s^2]
+    nu = 1.1395E-6  #Viscosity of sea water [m/s^2]
+
+    T = (TF+TA)/2
+    """ Calculation of 'Froude length', Lfn """
+    if Los/L < 1:
+        Lfn = Los
+    elif (Los/L >= 1) & (Los/L < 1.1):
+        Lfn = L+2/3*(Los-L)
+    elif Los/L >= 1.1:
+        Lfn = 1.0667*L
+
+    # 'Mean' resistance coefficients
+    a = np.mat([-0.3382, 0.8086, -6.0258, -3.5632, 9.4405, 0.0146, 0, 0, 0, 0])                                                #a1 means a[0,0]
+    b = np.mat([[-0.57424, 13.3893, 90.5960],[4.6614, -39.721, -351.483],[-1.14215, -12.3296, 459.254]]) 	#b12 means b[0,1]
+    d = np.mat([0.854, -1.228, 0.497])
+    e = np.mat([2.1701, -0.1602])
+    f  = np.mat([0.17, 0.20, 0.60])
+    g = np.mat([0.642, -0.635, 0.150])
+
+    Fn = Vs/((gravk*Lfn)**0.5) 	                    #Froude's number
+    Fnkrit_help0=np.mat([1,CB,CB**2])          # Build Matrix for using transpose: Fnkrit_help0.T
+    Fnkrit_help1 = d*Fnkrit_help0.T               # Fnkrit_help1=[[x]]   Matrix type
+    Fnkrit=Fnkrit_help1[0,0]                           # Fnkrit=x                  Float type
+    c1 = Fn/Fnkrit
+    Rns = Vs*L/nu						                          #Reynold's number for ship
+    if Rns == 0:                                                      #Rns=0,log would get stuck
+        CFs =0
+    else :
+        CFs = 0.075/(math.log10(Rns)-2)**2			#ITTC friction line for ship
+
+   
+    """ Calculation of C_R for given ship"""
+    # Mean value
+    CRFnkrit = max(1.0,(Fn/Fnkrit)**c1)
+    kL = e[0,0]*L**(e[0,1])
+
+    # There is an error in the hollenbach paper and in Minsaas' 2003 textbook, which is corrected in this formula by dividing by 10
+    CRstandard_help0=np.mat([1,Fn,Fn**2])
+    CRstandard_help1=Fnkrit_help0*(b*CRstandard_help0.T)/10
+    CRstandard=CRstandard_help1[0,0]
+
+    #prod([T/B B/L Los/Lwl Lwl/L (1+(TA-TF)/L) Dp/TA (1+NRud) (1+NBrac) (1+NBoss) (1+NThr)].^a)
+    prod_help=np.mat([T/B,B/L,Los/Lwl,Lwl/L,1+(TA-TF)/L,Dp/TA,1+NRud,1+NBrac,1+NBoss,1+NThr])
+    prod_help1=np.mat(np.ones((1,10)))                          #build a Matrix[1,10]
+    for j in range(a.size):                                            #prod_help=[prod_help[0,i].^a_min[0,i]]
+            prod_help1[0,j]=prod_help[0,j]**a[0,j]
+    prod_help2=np.prod(prod_help1,axis = 1)                 #prod function
+    prod=prod_help2[0,0]
+
+    CR_hollenbach = CRstandard*CRFnkrit*kL*prod
+    CR = CR_hollenbach*B*T/S  			       #Resistance coefficient, scaled for wetted surface
+    C_Ts = CFs + CR                                     #Total resistance coeff. ship 
+    R_T_mean = C_Ts*rho/2*Vs**2*S		   #Total resistance to the ship
+
+    Fn_min=min(f[0,0],f[0,0]+f[0,1]*(f[0,2]-CB))
+    Fn_max=g[0,0]+g[0,1]*CB+g[0,2]*CB**3
+
+    if Fn>Fn_max:
+        #R_T=h1*R_T_mean 
+        R_T=1.204*R_T_mean  #h1=1.204
+    elif Fn<Fn_min:
+        #CRFnkrit=kL=1.0
+        CR_min=CRstandard*prod*B*T/S
+        R_T= (CFs + CR_min)*rho/2*Vs**2*S
+    else:
+        R_T=R_T_mean
+
+    C_T = R_T*Vs*dt
+    return C_T
+## Function for calculating added resistance (-45 degrees ~ 45 degrees)
+## R=1/16*rho_sea*g*H^2*B*sqrt(B/Lbwl)
+def WaveResCosFun(Vs,Lbwl,B,rho_sea,wave_d,wave_h,dt):
+    angle_ship=np.mat([0,90,180,270])  #Angle of ship: North, East, South and West
+    for k in range(angle_ship.shape[1]):
+        angle_rel=np.mat(np.zeros(wave_d.shape))
+        R_wave=np.mat(np.zeros(wave_h.shape))
+        for i in range(wave_d.shape[0]):
+            for j in range(wave_h.shape[1]):
+                angle_rel[i,j]=wave_d[i,j]-angle_ship[0,k]
+                while angle_rel[i,j]<-180 or angle_rel[i,j]>=180:
+                    if angle_rel[i,j]< -180:
+                        angle_rel[i,j]=angle_rel[i,j]+360
+                    if angle_rel[i,j]>=180:
+                        angle_rel[i,j]=angle_rel[i,j]-360
+                
+                if angle_rel[i,j]<-45 or angle_rel[i,j]>45:
+                    R_wave[i,j]=0
+                else:
+                    R_wave[i,j]=rho_sea*g*B*math.sqrt(B/Lbwl)/16*wave_h[i,j]**2
+                C_wave=R_wave*Vs*dt
+        if k==0:
+            CF_Wave_N=C_wave
+        if k==1:
+            CF_Wave_E=C_wave
+        if k==2:
+            CF_Wave_S=C_wave
+        if k==0:
+            CF_Wave_W=C_wave
+    return CF_Wave_N,CF_Wave_E,CF_Wave_S,CF_Wave_W
+## Dijkstra's alogrithm (find path)
+class Dijkstra:
+    def __init__(self, ox, oy):
+        # initialize parameters
+        self.min_x = None
+        self.max_x = None
+        self.min_y = None
+        self.max_y = None
+        self.x_grid_num = None
+        self.y_grid_num = None
+        self.obstacle_map = None
+        self.calc_obstacle_grid_map(ox, oy) 
+
+    def calc_obstacle_grid_map(self, ox, oy):
+        """ build obstacle map """
+        # 1. get boundaries' values of the environment
+        self.min_x = round(min(ox))
+        self.max_x = round(max(ox))
+        self.min_y = round(min(oy))
+        self.max_y = round(max(oy))
+
+        # 2. calculate needed numbers of x,y in map
+        self.x_grid_num = round(self.max_x - self.min_x)
+        self.y_grid_num = round(self.max_y - self.min_y)
+
+        # 3. obstacle map generation
+        self.obstacle_map = [[False for _ in range(self.x_grid_num)] for _ in range(self.y_grid_num)]
+
+    def planning(self, sx, sy, gx, gy,CF_N,CF_E,CF_S,CF_W):
+        """ dijkstra path search """
+
+        # 1. get start_node, goal_node
+        sx_index = self.calc_xy_index(sx, self.min_x)
+        sy_index = self.calc_xy_index(sy, self.min_y)
+        gx_index = self.calc_xy_index(gx, self.min_x)
+        gy_index = self.calc_xy_index(gy, self.min_y)
+        start_node = self.Node(sx_index, sy_index, 0.0, -1)
+        goal_node = self.Node(gx_index, gy_index, 0.0, -1)
+
+        # 2. initialize open_set, close_set, put start_node into open_set
+        open_set, close_set = dict(), dict()
+        open_set[self.calc_index(start_node)] = start_node
+
+        # 3. search
+        while True:
+            # (1). choose the node whose cost is minimum in open_set
+            c_id = min(open_set, key=lambda o: open_set[o].cost)
+            current = open_set[c_id]
+           
+            if show: 
+                plt.plot(self.calc_position(current.x, self.min_x),
+                         self.calc_position(current.y, self.min_y), "xc")
+                # for stopping simulation with the esc key.
+                # plt.gcf().canvas.mpl_connect(
+                #     'key_release_event',
+                #     lambda event: [exit(0) if event.key == 'escape' else None])
+                if len(close_set.keys()) % 10 == 0:
+                    plt.pause(0.001)
+
+            # (2). determine whether the current node is the end point
+            if current.x == goal_node.x and current.y == goal_node.y:
+                goal_node.parent_index = current.parent_index
+                goal_node.cost = current.cost
+                break
+
+            # (3). remove the current node from the open set, add it to the closed set
+            del open_set[c_id]
+            close_set[c_id] = current
+
+            # (4). expand search grid based on motion model
+            self.robot_motion = self.get_motion_model(current.x,current.y,CF_N,CF_E,CF_S,CF_W)
+            for move_x, move_y, move_cost in self.robot_motion:
+                node = self.Node(current.x + move_x,
+                                 current.y + move_y,
+                                 current.cost + move_cost, c_id)
+                n_id = self.calc_index(node)
+
+                if n_id in close_set:
+                    continue
+
+                if not self.verify_node(node):
+                    continue
+
+                if n_id not in open_set:
+                    open_set[n_id] = node   # discover a new node
+                else:
+                    if open_set[n_id].cost >= node.cost:
+                        # This path is the best until now. record it!
+                        open_set[n_id] = node
+
+        rx, ry = self.calc_final_path(goal_node, close_set)
+
+        return rx, ry, goal_node.cost
+
+    def calc_final_path(self, goal_node, close_set):
+        """ generate final course """
+        rx = [self.calc_position(goal_node.x, self.min_x)]
+        ry = [self.calc_position(goal_node.y, self.min_y)]
+        
+        parent_index = goal_node.parent_index
+        while parent_index != -1:
+            n = close_set[parent_index]
+            rx.append(self.calc_position(n.x, self.min_x))
+            ry.append(self.calc_position(n.y, self.min_y))
+            parent_index = n.parent_index
+            
+        return rx, ry
+
+    class Node:
+        def __init__(self, x, y, cost,parent_index):
+            self.x = x      
+            self.y = y      
+            self.cost = cost       # g(n)
+            self.parent_index = parent_index    
+        #
+        # def __str__(self):
+        #     return str(self.x) + "," + str(self.y) + "," + str(self.cost) + "," + str(self.parent_index)
+    """ 
+    These 3 functions calc_index, calc_xy_index and calc_position are used for coordinate system transformation
+    However, in this project, they are useless because values of x and y in grid map coordinates and xy map are the same.
+    """
+    def calc_index(self, node):
+        index = node.y * self.x_grid_num + node.x
+        return index
+
+    def calc_xy_index(self, pos, min_p):
+        index = round(pos - min_p)
+        return index
+
+    def calc_position(self, index, min_p):
+        pos = min_p + index
+        return pos
+
+    def verify_node(self, node):
+        """ check whether the current position is appropriate """
+        px = self.calc_position(node.x, self.min_x)
+        py = self.calc_position(node.y, self.min_y)
+
+        if px < self.min_x or px > self.max_x:
+            return False
+        if py < self.min_x or py > self.max_y:
+            return False
+
+        return True
+
+    @staticmethod
+    def get_motion_model(x,y,CF_N,CF_E,CF_S,CF_W):
+        # dx, dy, cost
+        data_x=x
+        data_y=y
+        model = [
+            [0, 1, CF_N[data_x,data_y+1]],         # North
+            [0, -1,CF_S[data_x,data_y-1]],          # South
+            [-1, 0,CF_E[data_x-1,data_y]],          # East
+            [1, 0, CF_W[data_x+1,data_y]],        # West
+        ]
+        return model
+# ## for tasks
+# ## t,sx,sy,gx,gy,xcol,yrow,num_iter,dist
+""" 
+test 1: time=0.1,num_iter=30     succeed
+test 2: time=1,num_iter=30        succeed
+test 3: time=10, num_iter=30     succeed
+test 4: time=100, num_iter=30   fail
+test 5: time=100,num_iter=50    succeed
+"""
+time=100                            #Given Time [h]
+sx, sy = 3, 3                        #x,y of Start Point
+gx, gy = 47, 47                   #x,y of Goal Point
+xcol=50                             #Number of Columns
+yrow=50                            #Number of Rows
+num_iter=50                       #Limitation of iterations
+# time=float(input('given time(h):'))
+t=time*3600         #Given time[s]
+dist=1000             #Distance between neighbour nodes[m]
+# sx=int(input('start point[x](km):'))
+# sy=int(input('start point[y](km):'))
+# gx=int(input('goal point[x](km):'))
+# gy=int(input('goal point[y](km):'))
+# # it is a better choice to choose xcol=yrow
+# xcol=int(input('number of columns(>abs(sy-gy)):'))
+# yrow=int(input('number of rows(>abs(sx-gx):'))
+# num_iter=float(input('Limitation of iterations(max=xcol*yrow):'))
+# dist=float(input('Distance between neighbour nodes(m):'))
+# ## for wind resistance
+# ## Vs,rho_air,Cair,filepath1,filepath2
+Axv=1600
+rho_air=1.293
+filepath1 = "E:/User/Desktop/datalab/u-wind1.csv"
+filepath2 = "E:/User/Desktop/datalab/v-wind1.csv"
+# Axv=float(input('Area of maximum transverse section exposed to the wind(m^2):'))
+# rho_air=float(input('Density of Air (kg/m^3):')) 
+# Cair=np.mat(float(input('wind resistance coefficient(Be careful with Cair_extend):')))
+# filepath1=input('filepath of wind_u:')
+# filepath2=input('filepath of wind_v:')
+# ## for total resistance
+# ## Vs,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g
+L=200
+Lwl=195
+Los=196.5 
+B=33 
+TF=11.6
+TA=11.4 
+CB=0.855 
+S=10500
+Dp=7
+NRud=1
+NBrac=1
+NBoss=1
+NThr=1 
+
+rho_sea = 1025
+nu_sea = 1.1395E-6
+g = 9.81
+# L=float(input('Length of Ship(m):'))
+# Lwl=float(input('Length of Water Line(m):'))
+# Los=float(input('Length over Surface(m):'))
+# B=float(input('Beam(m):'))
+# TF=float(input('Draft of Fore Propeller(m):'))
+# TA=float(input('Draft of Aft Propeller(m):'))
+# CB=float(input('Block coefficient:'))
+# S=float(input('Wetted Surface(m^2):'))
+# Dp=float(input('Propeller diameter(m):'))
+# NRud=float(input('Number of rudders:'))
+# NBrac=float(input('Number of brackets:'))
+# NBoss=float(input('Number of bossings:'))
+# NThr=float(input('Number of side thrusters:'))
+# rho_sea=float(input('Density of Sea Water (kg/m^3):'))
+# nu_sea=float(input('Viscosity of Sea water (m^2/s):'))
+# g=float(input('Gravitational Constant (m/s^2):'))
+# ## for added resistance
+# ## Vs,Lbwl,B,rho_sea,g,filepath3,filepath4
+Lbwl=38
+filepath3 = "E:/User/Desktop/datalab/wave_mwd.csv"
+filepath4 = "E:/User/Desktop/datalab/wave_swh.csv"
+# Lbwl=float(input('Length of the Bow on the Water Line to 95% of maximum Beam (m):')"
+# filepath3=input('filepath of wave_d:')
+# filepath4=input('filepath of wave_h:')
+
+## Wind Resistance
+wind_u = ReadCsvWind(filepath1,xcol,yrow)
+wind_v = ReadCsvWind(filepath2,xcol,yrow)
+
+""" 
+If a new Cair is used, be careful with below functions for Cair_extend
+Inital data about General Cargo form ITTC (Value range: 0-180 degrees): 
+Cair=[-0.60, -0.87, -1.00, -1.00, -0.88, -0.85, -0.65, -0.42, -0.27, -0.09, 0.09, 0.49, 0.84, 1.39, 1.47, 1.34, 0.92, 0.82]
+Step 1: Wind resistance coefficient: Data about General Cargo form ITTC, but no data for 130 degree angle
+Cair=np.mat([-0.60, -0.87, -1.00, -1.00, -0.88, -0.85, -0.65, -0.42, -0.27, -0.09, 0.09, 0.49, 0.84, Cair_130,1.39, 1.47, 1.34, 0.92, 0.82])
+Step 2: Extend this matrix (Value range: 0-360 degrees):
+"""
+# Step 1
+Cair_130=0.5*0.84+0.5*1.39                                     #calculate the coefficient of 130 degree angle with that of 120 and 140 degree angle
+Cair=np.mat([-0.60, -0.87, -1.00, -1.00, -0.88, -0.85, -0.65, -0.42, -0.27, -0.09, 0.09, 0.49, 0.84, Cair_130,1.39, 1.47, 1.34, 0.92, 0.82])
+# Step 2
+Cair_extend=np.mat(np.zeros((Cair.size*2-1)))        #Value Range of Inital Data:0-180 degrees 
+Cair_extend[0,Cair.size-1]=Cair[0,Cair.size-1]          #Value Range of Extended Data:0-360 degrees 
+for i in range(Cair.size-1):
+    Cair_extend[0,i]=-Cair[0,i]
+    Cair_extend[0,2*Cair.size-i-2]=-Cair[0,i]
+
+## Viscous/Friction+ Wave Resistance
+
+## Added Resistance
+wave_d = ReadCsvWave(filepath3,xcol,yrow)
+wave_h = ReadCsvWave(filepath4,xcol,yrow)
+
+""" Build boundary """
+ox, oy = [], []
+for i in range(0, xcol):        #north boundary
+    ox.append(i)
+    oy.append(xcol)
+for i in range(0, yrow):         #east boundary
+    ox.append(0)
+    oy.append(i)
+for i in range(0, xcol):        #south boundary
+    ox.append(i)
+    oy.append(0)
+for i in range(0, yrow):         #west boundary
+    ox.append(yrow)
+    oy.append(i)
+dijkstra = Dijkstra(ox, oy)
+
+T_cost=np.mat(np.zeros((1,num_iter)))
+TotalCost=T_cost
+show = False
+for i in range(num_iter):
+    length=(abs(sx-gx)+abs(sy-gy))+i
+    """ 
+    find minimum cost in each velocity
+    Vs_min=(abs(sx-gx)+abs(sy-gy))/t
+    Vs_max=xcol*yrow/t
+    """
+    Vs=float(length*dist/t)
+    delta_T=dist/Vs
+
+    """calculate cost for each given velocity"""
+    CF_Wind_N,CF_Wind_E,CF_Wind_S,CF_Wind_W = WindResCosFun(Vs,Axv,rho_air,wind_u,wind_v,Cair_extend,delta_T)
+    CF_m=TotalResCosFun(Vs,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,delta_T)
+    CF_Wave_N,CF_Wave_E,CF_Wave_S,CF_Wave_W=WaveResCosFun(Vs,Lbwl,B,rho_sea,wave_d,wave_h,delta_T)
+    CF_N=CF_Wind_N+CF_Wave_N+CF_m
+    CF_E=CF_Wind_E+CF_Wave_E+CF_m
+    CF_S=CF_Wind_S+CF_Wave_S+CF_m
+    CF_W=CF_Wind_W+CF_Wave_W+CF_m
+
+    """find an efficient path for each given velocity"""
+    rx, ry, T_cost[0,i] = dijkstra.planning(sx, sy, gx, gy,CF_N,CF_E,CF_S,CF_W)
+
+    """check task time"""
+    if len(rx)*delta_T>t:
+        # print('The ship cannot reach the goal point in given time with this speed',Vs ,' [m/s]')
+        print('The ship cannot reach the goal point in given time with this speed',Vs/0.5144 ,' [knot]')
+        TotalCost[0,i]=0
+    else:
+        # print('The ship could reach the goal point in given time with this speed',Vs ,' [m/s]')
+        print('The ship could reach the goal point in given time with this speed',Vs/0.5144 ,' [knot]')
+        TotalCost[0,i]=T_cost[0,i]
+if np.max(TotalCost)==0:
+    print('The effective path could not be found after ',num_iter,' iterations' )
+else:
+
+    """compare total costs of paths"""
+    minx,miny= np.where(TotalCost == np.min(TotalCost[np.nonzero(TotalCost)]))
+
+    """get optimum velocity"""
+    length_E=(abs(sx-gx)+abs(sy-gy))+miny
+    Vs_E=float(length_E*dist/t)
+    delta_TE=dist/Vs_E
+    CFE_Wind_N,CFE_Wind_E,CFE_Wind_S,CFE_Wind_W = WindResCosFun(Vs_E,Axv,rho_air,wind_u,wind_v,Cair_extend,delta_T)
+    CFE_m=TotalResCosFun(Vs_E,L,Lwl,Los,B,TF,TA,CB,S,Dp,NRud,NBrac,NBoss,NThr,rho_sea,nu_sea,g,delta_T)
+    CFE_Wave_N,CFE_Wave_E,CFE_Wave_S,CFE_Wave_W=WaveResCosFun(Vs_E,Lbwl,B,rho_sea,wave_d,wave_h,delta_T)
+    CFE_N=CFE_Wind_N+CFE_Wave_N+CFE_m
+    CFE_E=CFE_Wind_E+CFE_Wave_E+CFE_m
+    CFE_S=CFE_Wind_S+CFE_Wave_S+CFE_m
+    CFE_W=CFE_Wind_W+CFE_Wave_W+CFE_m
+    show = True
+    if show:
+        plt.plot(ox, oy, '.k')
+        plt.plot(sx, sy, 'og')
+        plt.plot(gx, gy, 'or')
+        # plt.grid('True')
+        plt.axis('equal')
+        # plt.show()
+
+    """get optimum path for this optimum velocity"""
+    rx, ry, TotalCost_min = dijkstra.planning(sx, sy, gx, gy,CFE_N,CFE_E,CFE_S,CFE_W)
+    if show:
+        print('Find the effective path' )
+        # print('The efficient velocity is [m/s]:',Vs_E)
+        print('The efficient velocity is [knot]:',Vs_E/0.5144)
+        # print('The minimum cost is [J]:',TotalCost_min)
+        print('The minimum cost is [MJ]:',TotalCost_min/1000000)
+        plt.plot(rx, ry, '-r')
+        plt.pause(0.01)
+        plt.show()
+\end{lstlisting}
